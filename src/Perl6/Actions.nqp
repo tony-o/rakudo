@@ -272,7 +272,7 @@ sub WANTED($ast, $by) {
         $ast.wanted(1);  # force in case it's just a thunk
     }
     else {
-#        note("Non ast passed to WANTED: " ~ $ast.HOW.name($ast));
+        note("Non ast passed to WANTED: " ~ $ast.HOW.name($ast));
     }
     $ast;
 }
@@ -1021,10 +1021,6 @@ sub monkey_see_no_eval($/) {
 }
 
 role STDActions {
-    method rakuast($node) {
-        $*W.find_symbol(['RakuAST', $node], :setting-only)
-    }
-
     method quibble($/) {
         make $<nibble>.ast;
     }
@@ -8240,7 +8236,7 @@ class Perl6::Actions is HLL::Actions does STDActions {
     method version($/) {
         my $v := $*W.find_single_symbol('Version').new(~$<vstr>);
         $*W.add_object_if_no_sc($v);
-        make self.rakuast('VersionLiteral').new($v);
+        make QAST::WVal.new( :value($v) );
     }
 
     method decint($/) {
@@ -8296,7 +8292,7 @@ class Perl6::Actions is HLL::Actions does STDActions {
 
     method numish($/) {
         if $<integer> {
-            make self.rakuast('IntLiteral').new($*W.intern_constant('Int', 'bigint', $<integer>.ast));
+            make $*W.add_numeric_constant($/, 'Int', $<integer>.ast);
         }
         elsif $<dec_number>     { make $<dec_number>.ast; }
         elsif $<rad_number>     { make $<rad_number>.ast; }
@@ -8316,12 +8312,10 @@ class Perl6::Actions is HLL::Actions does STDActions {
             }
         }
         elsif $<uinf> {
-            make self.rakuast('NumLiteral').new:
-                    $*W.intern_constant('Num', 'num', nqp::inf);
+            make $*W.add_numeric_constant($/, 'Num', nqp::inf);
         }
         else {
-            make self.rakuast('NumLiteral').new:
-                    $*W.intern_constant('Num', 'num', nqp::numify($/));
+            make $*W.add_numeric_constant($/, 'Num', nqp::numify($/));
         }
     }
 
@@ -8333,10 +8327,8 @@ class Perl6::Actions is HLL::Actions does STDActions {
 
     method dec_number($/) {
         if $<escale> { # wants a Num
-            make self.rakuast('NumLiteral').new:
-                    $*W.intern_constant('Num', 'num', nqp::numify($/));
-        }
-        else { # wants a Rat
+            make $*W.add_numeric_constant: $/, 'Num', nqp::numify($/);
+        } else { # wants a Rat
             my $Int := $*W.find_single_symbol('Int');
             my $parti;
             my $partf;
@@ -8359,8 +8351,9 @@ class Perl6::Actions is HLL::Actions does STDActions {
                 $partf := nqp::box_i(1, $Int);
             }
 
-            make self.rakuast('RatLiteral').new:
-                $*W.intern_constant('Rat', 'type_new', $parti, $partf, :nocache(1));
+            my $ast := $*W.add_constant('Rat', 'type_new', $parti, $partf, :nocache(1));
+            $ast.node($/);
+            make $ast;
         }
     }
 
