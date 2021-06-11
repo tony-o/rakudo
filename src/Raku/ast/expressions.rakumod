@@ -4,6 +4,47 @@ class RakuAST::CaptureSource is RakuAST::Node {
 
 # Everything that can appear as an expression does RakuAST::Expression.
 class RakuAST::Expression is RakuAST::Node {
+    # All expressions can be thunked - that is, compiled such that they get
+    # wrapped up in a code object of some kind. For such expressions, this
+    # thunks attribute will point to a linked list of thunks to apply, the
+    # outermost first. (Rationale: we'll add these at check time, and chlidren
+    # are visited ahead of parents. Adding to a linked list at the start is
+    # cheapest.
+    has Mu $!thunks;
+
+    method wrap-with-thunk(RakuAST::ExpressionThunk $thunk) {
+        $thunk.set-next($!thunks) if $!thunks;
+        nqp::bindattr(self, RakuAST::Expression, '$!thunks', $thunk);
+        Nil
+    }
+
+    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context, *%opts) {
+        $!thunks
+            ?? self.IMPL-THUNKED-EXPR-QAST($context, $!thunks, %opts)
+            !! self.IMPL-EXPR-QAST($context, |%opts)
+    }
+
+    method IMPL-THUNKED-EXPR-QAST(RakuAST::IMPL::QASTContext $context,
+            RakuAST::ExpressionThunk $thunk, %opts) {
+        my $next := $thunk.next;
+        $thunk.IMPL-THUNK-QAST($context, $next
+            ?? self.IMPL-THUNKED-EXPR-QAST($context, $next, %opts)
+            !! self.IMPL-EXPR-QAST($context, |%opts))
+    }
+
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
+        nqp::die('Missing IMPL-EXPR-QAST method on ' ~ self.HOW.name(self))
+    }
+}
+
+# The base of all expression thunks.
+class RakuAST::ExpressionThunk is RakuAST::Node {
+    has RakuAST::ExpressionThunk $.next;
+
+    method set-next(RakuAST::ExpressionThunk $next) {
+        nqp::bindattr(self, RakuAST::ExpressionThunk, '$!next', $next);
+        Nil
+    }
 }
 
 # Everything that is termish (a term with prefixes or postfixes applied).
@@ -312,7 +353,7 @@ class RakuAST::ApplyInfix is RakuAST::Expression {
         $obj
     }
 
-    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context) {
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
         $!infix.IMPL-INFIX-COMPILE($context, $!left, $!right)
     }
 
@@ -342,7 +383,7 @@ class RakuAST::ApplyListInfix is RakuAST::Expression {
         $obj
     }
 
-    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context) {
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
         my @operands;
         for self.IMPL-UNWRAP-LIST($!operands) {
             @operands.push($_.IMPL-TO-QAST($context));
@@ -434,7 +475,7 @@ class RakuAST::ApplyDottyInfix is RakuAST::Expression {
         $obj
     }
 
-    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context) {
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
         $!infix.IMPL-DOTTY-INFIX-QAST: $context,
             $!left.IMPL-TO-QAST($context),
             $!right
@@ -487,7 +528,7 @@ class RakuAST::ApplyPrefix is RakuAST::Termish {
         $obj
     }
 
-    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context) {
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
         $!prefix.IMPL-PREFIX-QAST($context, $!operand.IMPL-TO-QAST($context))
     }
 
@@ -687,7 +728,7 @@ class RakuAST::ApplyPostfix is RakuAST::Termish {
         $!postfix.can-be-bound-to
     }
 
-    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context) {
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
         $!postfix.IMPL-POSTFIX-QAST($context, $!operand.IMPL-TO-QAST($context))
     }
 
@@ -722,7 +763,7 @@ class RakuAST::Ternary is RakuAST::Expression {
         $obj
     }
 
-    method IMPL-TO-QAST(RakuAST::IMPL::QASTContext $context) {
+    method IMPL-EXPR-QAST(RakuAST::IMPL::QASTContext $context) {
         QAST::Op.new(
             :op('if'),
             $!condition.IMPL-TO-QAST($context),
